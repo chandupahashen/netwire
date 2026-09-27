@@ -106,6 +106,23 @@ export interface RemoteStatus {
   token_set: boolean;
 }
 
+export interface ToastPayload {
+  id: number;
+  kind: string;
+  app: string;
+  message: string;
+  severity: string;
+  ts: number;
+  duration_ms: number;
+  view_tab: string;
+  view_exe: string;
+}
+
+export interface OpenTab {
+  tab: string;
+  exe: string;
+}
+
 export function fmtRate(bps: number): string {
   if (bps >= 1e9) return `${(bps / 1e9).toFixed(2)} GB/s`;
   if (bps >= 1e6) return `${(bps / 1e6).toFixed(2)} MB/s`;

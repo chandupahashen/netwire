@@ -46,6 +46,18 @@ export default function Settings({
   const [rurl, setRurl] = useState("ws://127.0.0.1:17813");
   const [rtoken, setRtoken] = useState("");
   const [msg, setMsg] = useState("");
+  const [ntf, setNtf] = useState<Record<string, boolean>>({});
+  const [quietFrom, setQuietFrom] = useState("");
+  const [quietTo, setQuietTo] = useState("");
+  const [ntfDuration, setNtfDuration] = useState("default");
+
+  const NTF_KINDS = [
+    ["new-app", "New app connects"],
+    ["device-join", "Device joins LAN"],
+    ["threat-ip", "Flagged IP contact"],
+    ["quota", "Daily quota exceeded"],
+    ["app-quota", "App quota exceeded"],
+  ] as const;
 
   async function load() {
     try {
@@ -56,6 +68,16 @@ export default function Settings({
       const cfg = await invoke<RemoteConfig>("get_remote_config");
       setRcfg(cfg);
       setRstatus(await invoke<RemoteStatus>("remote_status"));
+      const toggles: Record<string, boolean> = {};
+      for (const [kind] of NTF_KINDS) {
+        const v = await invoke<string>("get_setting", { key: `ntf_${kind}` });
+        toggles[kind] = v !== "0";
+      }
+      setNtf(toggles);
+      setQuietFrom(await invoke<string>("get_setting", { key: "ntf_quiet_from" }));
+      setQuietTo(await invoke<string>("get_setting", { key: "ntf_quiet_to" }));
+      const d = await invoke<string>("get_setting", { key: "ntf_duration" });
+      if (d) setNtfDuration(d);
     } catch (e) {
       setMsg(String(e));
     }
@@ -96,6 +118,64 @@ export default function Settings({
           />
           Start with system
         </label>
+      </Section>
+
+      <Section title="Notifications" sub="Branded desktop popups — pick what interrupts you">
+        {NTF_KINDS.map(([kind, label]) => (
+          <label className="check" key={kind}>
+            <input
+              type="checkbox"
+              checked={ntf[kind] ?? true}
+              onChange={async (e) => {
+                const on = e.target.checked;
+                setNtf((p) => ({ ...p, [kind]: on }));
+                await invoke("set_setting", { key: `ntf_${kind}`, value: on ? "1" : "0" });
+              }}
+            />
+            {label}
+          </label>
+        ))}
+        <label>
+          Quiet hours
+          <input
+            className="num-in"
+            style={{ width: 70 }}
+            placeholder="22:00"
+            aria-label="Quiet hours from"
+            value={quietFrom}
+            onChange={(e) => setQuietFrom(e.target.value)}
+            onBlur={() => invoke("set_setting", { key: "ntf_quiet_from", value: quietFrom })}
+          />
+          <span className="muted">to</span>
+          <input
+            className="num-in"
+            style={{ width: 70 }}
+            placeholder="07:00"
+            aria-label="Quiet hours to"
+            value={quietTo}
+            onChange={(e) => setQuietTo(e.target.value)}
+            onBlur={() => invoke("set_setting", { key: "ntf_quiet_to", value: quietTo })}
+          />
+        </label>
+        <label>
+          Popup duration
+          <select
+            value={ntfDuration}
+            onChange={async (e) => {
+              setNtfDuration(e.target.value);
+              await invoke("set_setting", { key: "ntf_duration", value: e.target.value });
+            }}
+          >
+            <option value="short">Short</option>
+            <option value="default">Default</option>
+            <option value="long">Long</option>
+          </select>
+        </label>
+        <div className="full">
+          <button className="btn" onClick={() => invoke("send_test_toast").catch((e) => setMsg(String(e)))}>
+            Send test toast
+          </button>
+        </div>
       </Section>
 
       <Section title="Per-app quotas" sub="Get warned when an app blows its daily budget">

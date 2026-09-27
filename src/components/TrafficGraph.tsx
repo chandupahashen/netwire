@@ -36,7 +36,9 @@ export default function TrafficGraph({ down, up, labels, colors, height = 220, f
         { label: "Down B/s", paths: uPlot.paths.spline?.(), stroke: colors.down, fill: colors.down + "2e", width: 2 },
         { label: "Up B/s", paths: uPlot.paths.spline?.(), stroke: colors.up, fill: colors.up + "1f", width: 2 },
       ],
-      legend: { show: true },
+      // The overview card already shows download/upload values in its header;
+      // hiding uPlot's extra legend keeps the chart inside the card border.
+      legend: { show: !fill },
       cursor: { show: true },
     };
     const plot = new uPlot(opts, [labels, down, up], hostRef.current);

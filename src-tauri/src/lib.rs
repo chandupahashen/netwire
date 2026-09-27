@@ -3,6 +3,7 @@ mod enrich;
 mod estats;
 mod models;
 mod monitor;
+mod notify;
 mod remote;
 mod store;
 mod vt;
@@ -36,6 +37,7 @@ struct AppState {
     remote_handle: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     remote_peers: Arc<AtomicUsize>,
     running_port: Mutex<Option<u16>>,
+    toasts: notify::ToastCenter,
 }
 
 fn now_ts() -> i64 {
@@ -148,11 +150,24 @@ fn scan_lan(app: AppHandle) -> Result<Vec<DeviceItem>, String> {
             }
         }
         let devices = store.devices(200).map_err(|e| e.to_string())?;
+        drop(store); // dispatch_popup re-locks the store — must not hold it here
         let _ = app.emit("device-changed", &devices);
         if fresh > 0 {
             let _ = app.emit(
                 "alert-raised",
                 serde_json::json!({"kind":"device-join","count":fresh}),
+            );
+            dispatch_popup(
+                &app,
+                "device-join",
+                "",
+                "",
+                if fresh == 1 {
+                    "A new device joined the LAN".to_string()
+                } else {
+                    format!("{} new devices joined the LAN", fresh)
+                },
+                "info",
             );
         }
         Ok(devices)
@@ -241,6 +256,14 @@ const SETTING_KEYS: &[&str] = &[
     "remote_port",
     "remote_token",
     "remote_bind",
+    "ntf_new-app",
+    "ntf_device-join",
+    "ntf_threat-ip",
+    "ntf_quota",
+    "ntf_app-quota",
+    "ntf_quiet_from",
+    "ntf_quiet_to",
+    "ntf_duration",
 ];
 
 #[tauri::command]
@@ -488,6 +511,68 @@ fn export_connections_csv(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 fn get_geo_status() -> &'static str {
     "missing-mmdb"
+}
+
+// ---------- Custom toast notifications ----------
+
+#[tauri::command]
+fn toast_list(state: tauri::State<'_, AppState>) -> Vec<notify::ToastPayload> {
+    state.toasts.list()
+}
+
+#[tauri::command]
+fn toast_dismiss(app: AppHandle, id: u64) -> Vec<notify::ToastPayload> {
+    let state: tauri::State<'_, AppState> = app.state();
+    state.toasts.remove(id);
+    let list = state.toasts.list();
+    notify::sync_toast_window(&app, state.toasts.height(), list.len());
+    list
+}
+
+#[tauri::command]
+fn toast_resize(app: AppHandle, height: u32) -> Result<(), String> {
+    let state: tauri::State<'_, AppState> = app.state();
+    state.toasts.set_height(height);
+    notify::sync_toast_window(&app, state.toasts.height(), state.toasts.list().len());
+    Ok(())
+}
+
+/// Toast action: "view" focuses the main window + deep-links the tab,
+/// anything else just dismisses.
+#[tauri::command]
+fn toast_action(app: AppHandle, id: u64, action: String) -> Result<(), String> {
+    let state: tauri::State<'_, AppState> = app.state();
+    let removed = state.toasts.remove(id);
+    let list = state.toasts.list();
+    notify::sync_toast_window(&app, state.toasts.height(), list.len());
+    let _ = app.emit("notify-toast-list", &list);
+    if action == "view" {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+        }
+        if let Some(t) = removed {
+            let _ = app.emit(
+                "open-tab",
+                serde_json::json!({"tab": t.view_tab, "exe": t.view_exe}),
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn send_test_toast(app: AppHandle) -> Result<(), String> {
+    dispatch_popup(
+        &app,
+        "new-app",
+        "NetWire",
+        "",
+        "This is how NetWire alerts will look. Click View to open the feed.".to_string(),
+        "info",
+    );
+    Ok(())
 }
 
 // ---------- Tray (sparkline mini-graph) ----------
@@ -760,6 +845,17 @@ fn spawn_monitor(app: AppHandle) {
                                     "alert-raised",
                                     serde_json::json!({"kind":"new-app","app":a.name}),
                                 );
+                                dispatch_popup(
+                                    &app,
+                                    "new-app",
+                                    &a.name,
+                                    &a.exe,
+                                    format!(
+                                        "{} accessed the network for the first time",
+                                        a.name
+                                    ),
+                                    "info",
+                                );
                             }
                             for h in &a.hosts {
                                 if let Ok(true) = s.is_threat(&h.ip) {
@@ -777,10 +873,16 @@ fn spawn_monitor(app: AppHandle) {
                                             ),
                                             "high",
                                         );
-                                        notify(
+                                        dispatch_popup(
                                             &app,
-                                            "NetWire threat",
-                                            &format!("{} → flagged {}", a.name, h.ip),
+                                            "threat-ip",
+                                            &a.name,
+                                            "",
+                                            format!(
+                                                "{} talked to flagged IP {}",
+                                                a.name, h.ip
+                                            ),
+                                            "high",
                                         );
                                         let _ = app.emit(
                                             "alert-raised",
@@ -813,7 +915,17 @@ fn spawn_monitor(app: AppHandle) {
                                     ),
                                     "warn",
                                 );
-                                notify(&app, "NetWire quota", "Daily data quota exceeded");
+                                dispatch_popup(
+                                    &app,
+                                    "quota",
+                                    "",
+                                    "",
+                                    format!(
+                                        "Daily data quota exceeded ({:.2} GiB)",
+                                        today as f64 / 1073741824.0
+                                    ),
+                                    "warn",
+                                );
                                 let _ =
                                     app.emit("alert-raised", serde_json::json!({"kind":"quota"}));
                             }
@@ -844,10 +956,17 @@ fn spawn_monitor(app: AppHandle) {
                                             ),
                                             "warn",
                                         );
-                                        notify(
+                                        dispatch_popup(
                                             &app,
-                                            "NetWire app quota",
-                                            &format!("{} over quota", q.name),
+                                            "app-quota",
+                                            &q.name,
+                                            &q.exe,
+                                            format!(
+                                                "{} exceeded its daily quota ({:.1} MiB)",
+                                                if q.name.is_empty() { &q.exe } else { &q.name },
+                                                q.bytes_today as f64 / 1048576.0
+                                            ),
+                                            "warn",
                                         );
                                         let _ = app.emit(
                                             "alert-raised",
@@ -908,6 +1027,69 @@ fn notify(app: &AppHandle, title: &str, body: &str) {
     let _ = app.notification().builder().title(title).body(body).show();
 }
 
+/// Route an alert through the custom toast center (toggle → quiet hours →
+/// coalesce → toast window, native fallback). Feed/alert-raised emission
+/// stays the caller's job.
+fn dispatch_popup(
+    app: &AppHandle,
+    kind: &str,
+    app_name: &str,
+    exe: &str,
+    message: String,
+    severity: &str,
+) {
+    let state: tauri::State<'_, AppState> = app.state();
+    let (enabled, qf, qt, scale) = {
+        let store = state.store.lock();
+        let g = |k: &str, d: &str| {
+            store
+                .get_setting(k)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| d.to_string())
+        };
+        (
+            g(&format!("ntf_{}", kind), "1") == "1",
+            g("ntf_quiet_from", ""),
+            g("ntf_quiet_to", ""),
+            notify::duration_scale(&g("ntf_duration", "default")),
+        )
+    };
+    if !enabled {
+        return;
+    }
+    if notify::in_quiet_hours(notify::local_now_min(), &qf, &qt) {
+        return;
+    }
+    let now = now_ts();
+    let t = notify::ToastPayload {
+        id: 0,
+        kind: kind.to_string(),
+        app: app_name.to_string(),
+        message,
+        severity: severity.to_string(),
+        ts: now,
+        duration_ms: notify::duration_for(severity, scale),
+        view_tab: notify::view_tab_for(kind).to_string(),
+        view_exe: exe.to_string(),
+    };
+    if state.toasts.push(t, now).is_some() {
+        let list = state.toasts.list();
+        let h = state.toasts.height();
+        match notify::show_toasts(app, h) {
+            Ok(()) => {
+                let _ = app.emit("notify-toast-list", &list);
+            }
+            Err(e) => {
+                eprintln!("[netwire] toast window failed, native fallback: {}", e);
+                if let Some(last) = list.last() {
+                    notify(app, "NetWire", &last.message);
+                }
+            }
+        }
+    }
+}
+
 // ---------- Entry ----------
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -935,10 +1117,13 @@ pub fn run() {
             remote_handle: Mutex::new(None),
             remote_peers: Arc::new(AtomicUsize::new(0)),
             running_port: Mutex::new(None),
+            toasts: notify::ToastCenter::new(),
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -1009,6 +1194,11 @@ pub fn run() {
             remote_status,
             export_history_csv,
             export_connections_csv,
+            toast_list,
+            toast_dismiss,
+            toast_resize,
+            toast_action,
+            send_test_toast,
             get_geo_status
         ])
         .run(tauri::generate_context!())

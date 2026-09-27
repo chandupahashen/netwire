@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/setup@v3
+        with:
+          runtime: node@22
+          require-lockfile: true
+          cache: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure GitHub Releases updater endpoint
+        shell: pwsh
+        run: |
+          $endpoint = "https://github.com/${{ github.repository }}/releases/latest/download/latest.json"
+          $config = @{ plugins = @{ updater = @{ endpoints = @($endpoint) } } } | ConvertTo-Json -Depth 5
+          Set-Content -Path updater-release.json -Value $config -Encoding utf8
+
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: NetWire ${{ github.ref_name }}
+          releaseBody: Download the Windows installer below. NetWire checks GitHub Releases for updates.
+          releaseDraft: false
+          prerelease: false
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: --config updater-release.json

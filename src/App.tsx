@@ -9,7 +9,8 @@ import DevicesPanel from "./components/DevicesPanel";
 import HistoryBar from "./components/HistoryBar";
 import Settings from "./components/Settings";
 import TrafficGraph from "./components/TrafficGraph";
-import type { TrafficTick, VtResult } from "./types";
+import UpdateBanner from "./components/UpdateBanner";
+import type { OpenTab, TrafficTick, VtResult } from "./types";
 import { fmtBytes, fmtRate } from "./types";
 import "./App.css";
 
@@ -98,6 +99,15 @@ export default function App() {
       offs.push(await listen("device-changed", () => {
         if (!alive || remoteRef.current) return;
         setAlertSignal((n) => n + 1);
+      }));
+      offs.push(await listen<OpenTab>("open-tab", (e) => {
+        if (!alive) return;
+        const valid: Tab[] = ["live", "usage", "conns", "alerts", "things", "settings"];
+        if (valid.includes(e.payload.tab as Tab)) {
+          if (remoteRef.current) disconnectRemote();
+          setTab(e.payload.tab as Tab);
+          if (e.payload.exe) setSelected(e.payload.exe);
+        }
       }));
     })();
     return () => {
@@ -239,6 +249,7 @@ export default function App() {
               </span>
             </div>
           )}
+          <UpdateBanner />
           {remoteErr && (
             <div className="notice warn"><span className="notice-icon">!</span><span>{remoteErr}</span></div>
           )}
