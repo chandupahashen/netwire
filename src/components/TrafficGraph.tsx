@@ -19,8 +19,8 @@ export default function TrafficGraph({ down, up, labels, colors, height = 220, f
   useEffect(() => {
     if (!hostRef.current) return;
     const opts: uPlot.Options = {
-      width: Math.max(320, hostRef.current.clientWidth),
-      height: fill ? Math.max(240, hostRef.current.clientHeight) : height,
+      width: Math.max(fill ? 1 : 320, hostRef.current.clientWidth),
+      height: fill ? Math.max(1, hostRef.current.clientHeight) : height,
       scales: { x: { time: true }, y: { range: (_u, _min, max) => [0, Math.max(max * 1.15, 1024)] } },
       axes: [
         { stroke: colors.text, grid: { stroke: colors.grid } },
@@ -47,8 +47,8 @@ export default function TrafficGraph({ down, up, labels, colors, height = 220, f
       const host = hostRef.current;
       if (!host) return;
       plot.setSize({
-        width: Math.max(320, host.clientWidth),
-        height: fill ? Math.max(240, host.clientHeight) : height,
+        width: Math.max(fill ? 1 : 320, host.clientWidth),
+        height: fill ? Math.max(1, host.clientHeight) : height,
       });
     };
     const observer = new ResizeObserver(resize);

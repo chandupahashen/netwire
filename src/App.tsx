@@ -209,25 +209,25 @@ export default function App() {
         </div>
       </div>
 
+      <nav className="top-nav" aria-label="Main navigation">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className={`top-nav-button ${tab === t.id ? "selected" : ""}`}
+            aria-label={t.label}
+            aria-current={tab === t.id ? "page" : undefined}
+            title={t.label}
+            data-tooltip={t.label}
+            onClick={() => setTab(t.id)}
+          >
+            <span aria-hidden="true">{t.icon}</span>
+          </button>
+        ))}
+      </nav>
+
       <div className="app-frame">
         <div className="main-content">
-          <nav className="floating-nav" aria-label="Main navigation">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className={`floating-nav-button ${tab === t.id ? "selected" : ""}`}
-                aria-label={t.label}
-                aria-current={tab === t.id ? "page" : undefined}
-                title={t.label}
-                data-tooltip={t.label}
-                onClick={() => setTab(t.id)}
-              >
-                <span aria-hidden="true">{t.icon}</span>
-              </button>
-            ))}
-          </nav>
-
           {tab !== "live" && (
             <div className="page-header">
               <div>
