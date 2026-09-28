@@ -107,16 +107,22 @@ export default function Settings({
         </label>
       </Section>
 
-      <Section title="Startup" sub="Launch behaviour">
+      <Section title="Startup" sub="Choose whether NetWire opens when you sign in to Windows">
         <label className="check">
           <input
             type="checkbox"
             checked={autostart}
-            onChange={async (e) => {
-              setAutostartState(await invoke<boolean>("set_autostart", { enabled: e.target.checked }));
+            onChange={async (event) => {
+              const enabled = event.target.checked;
+              setMsg("");
+              try {
+                setAutostartState(await invoke<boolean>("set_autostart", { enabled }));
+              } catch (error) {
+                setMsg(`Could not update Windows startup: ${String(error)}`);
+              }
             }}
           />
-          Start with system
+          Launch NetWire at Windows sign-in
         </label>
       </Section>
 

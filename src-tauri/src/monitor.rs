@@ -11,7 +11,7 @@
 use anyhow::Result;
 use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo};
 use std::collections::HashMap;
-use sysinfo::{Networks, ProcessesToUpdate, System};
+use sysinfo::{Networks, Pid, ProcessesToUpdate, System};
 
 use crate::estats::FlowSample;
 use crate::models::{AppStat, HostStat};
@@ -35,13 +35,24 @@ pub struct Snapshot {
 pub struct Poller {
     sys: System,
     nets: Networks,
+    /// PID → (name, exe) cache. Fast path refreshes only PIDs seen in the
+    /// socket table; a full refresh every FULL_REFRESH_TICKS prunes dead
+    /// entries and picks up renames. Bounds the worst case: a PID reused
+    /// within the window can show a stale name for ≤30s.
+    procs: HashMap<u32, (String, String)>,
+    ticks_since_full: u32,
 }
+
+const FULL_REFRESH_TICKS: u32 = 30;
 
 impl Poller {
     pub fn new() -> Self {
         Self {
-            sys: System::new_all(),
+            sys: System::new(),
             nets: Networks::new_with_refreshed_list(),
+            procs: HashMap::new(),
+            // Force a full refresh on the first snapshot.
+            ticks_since_full: FULL_REFRESH_TICKS,
         }
     }
 
@@ -59,19 +70,11 @@ impl Poller {
             total_tx += data.total_transmitted();
         }
 
-        // 2. Process names (cached refresh, cheap enough at 1Hz for V1).
-        self.sys
-            .refresh_processes(ProcessesToUpdate::All, true);
-        let mut proc_names: HashMap<u32, (String, String)> = HashMap::new();
-        for (pid, p) in self.sys.processes() {
-            let pid_u32 = pid.as_u32();
-            let name = p.name().to_string_lossy().to_string();
-            let exe = p
-                .exe()
-                .map(|e| e.to_string_lossy().to_string())
-                .unwrap_or_default();
-            proc_names.insert(pid_u32, (name, exe));
-        }
+        // 2. Process names: full enumeration is the most expensive call in
+        // the loop, so only PIDs owning sockets are refreshed per tick.
+        // Socket PIDs are collected from the table below; on the first pass
+        // (and every FULL_REFRESH_TICKS) the whole table is refreshed.
+        let mut sock_pids: Vec<u32> = Vec::new();
 
         // 3. Socket table.
         let mut sockets = Vec::new();
@@ -80,6 +83,9 @@ impl Poller {
         if let Ok(infos) = netstat2::get_sockets_info(af, proto) {
             for info in infos {
                 let pid = info.associated_pids.first().copied().unwrap_or(0);
+                if pid != 0 && !sock_pids.contains(&pid) {
+                    sock_pids.push(pid);
+                }
                 match info.protocol_socket_info {
                     ProtocolSocketInfo::Tcp(t) => {
                         // netstat2 0.11: remote_addr is IpAddr + remote_port separately.
@@ -118,11 +124,50 @@ impl Poller {
             }
         }
 
+        // 4. Resolve process names: full refresh on first pass and every
+        // FULL_REFRESH_TICKS, otherwise only the PIDs owning sockets.
+        if self.ticks_since_full >= FULL_REFRESH_TICKS {
+            self.sys.refresh_processes(ProcessesToUpdate::All, true);
+            self.procs.clear();
+            for (pid, p) in self.sys.processes() {
+                self.procs.insert(
+                    pid.as_u32(),
+                    (
+                        p.name().to_string_lossy().to_string(),
+                        p.exe()
+                            .map(|e| e.to_string_lossy().to_string())
+                            .unwrap_or_default(),
+                    ),
+                );
+            }
+            self.ticks_since_full = 0;
+        } else {
+            let pids: Vec<Pid> = sock_pids.iter().map(|p| Pid::from_u32(*p)).collect();
+            if !pids.is_empty() {
+                self.sys
+                    .refresh_processes(ProcessesToUpdate::Some(&pids), false);
+                for pid in &sock_pids {
+                    if let Some(p) = self.sys.process(Pid::from_u32(*pid)) {
+                        self.procs.insert(
+                            *pid,
+                            (
+                                p.name().to_string_lossy().to_string(),
+                                p.exe()
+                                    .map(|e| e.to_string_lossy().to_string())
+                                    .unwrap_or_default(),
+                            ),
+                        );
+                    }
+                }
+            }
+            self.ticks_since_full += 1;
+        }
+
         Ok(Snapshot {
             total_rx,
             total_tx,
             sockets,
-            proc_names,
+            proc_names: self.procs.clone(),
         })
     }
 }

@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 const TICK_SECS: u64 = 1;
-const DB_WRITE_EVERY_TICKS: u64 = 2;
+const DB_WRITE_EVERY_TICKS: u64 = 5;
 const KEEP_DAYS: i64 = 90;
 const DEFAULT_QUOTA: u64 = 5 * 1024 * 1024 * 1024; // 5 GiB/day
 const DEFAULT_REMOTE_PORT: u16 = 17813;
@@ -677,14 +677,18 @@ fn build_tray(app: &AppHandle) -> anyhow::Result<()> {
 
 // ---------- Background monitor loop ----------
 
-fn spawn_monitor(app: AppHandle) {
+fn spawn_monitor(
+    app: AppHandle,
+    dns_tx: std::sync::mpsc::SyncSender<Vec<String>>,
+    rdns: enrich::RdnsCache,
+) {
     std::thread::spawn(move || {
         let mut poller = monitor::Poller::new();
         let app_data = app
             .path()
             .app_data_dir()
             .unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let mut enricher = enrich::Enricher::new(&app_data);
+        let enricher = enrich::Enricher::new(&app_data);
         let mut flows = estats::FlowTracker::new();
 
         let mut prev_rx = 0u64;
@@ -694,12 +698,20 @@ fn spawn_monitor(app: AppHandle) {
         let mut tick_n = 0u64;
         let mut quota_alerted_day: i64 = -1;
         let mut rate_history: Vec<f64> = Vec::with_capacity(48);
+        // Tick-budget tracking (max per 60-tick window, warmup excluded).
+        let mut slowest_ms: u128 = 0;
+        let mut slowest_snap_ms: u128 = 0;
+        let mut slowest_flow_ms: u128 = 0;
+        let mut slowest_rest_ms: u128 = 0;
 
         loop {
             let loop_start = Instant::now();
             let now = now_ts();
 
-            match poller.snapshot() {
+            let snap_t0 = Instant::now();
+            let snap_res = poller.snapshot();
+            let snap_ms = snap_t0.elapsed().as_millis();
+            match snap_res {
                 Ok(snap) => {
                     let dt = prev_t.elapsed().as_secs_f64().max(0.2);
                     let (drx, dtx) = if first {
@@ -716,24 +728,41 @@ fn spawn_monitor(app: AppHandle) {
                     prev_t = Instant::now();
 
                     // Byte-accurate TCP flows (Windows EStats) or estimate fallback.
+                    let flow_t0 = Instant::now();
                     let flow = flows.tick(&snap.sockets);
+                    let flow_ms = flow_t0.elapsed().as_millis();
 
-                    // rDNS best-effort for up to 4 unknown remotes per tick.
-                    let mut need: Vec<String> = Vec::new();
-                    for s in snap.sockets.iter().take(40) {
-                        if s.proto != "TCP" {
-                            continue;
+                    // rDNS: enqueue misses for the background resolver thread.
+                    // Never blocks here — a full channel just means "try next tick".
+                    // GeoIP is a pure in-memory lookup, safe on the hot path.
+                    {
+                        let cache = rdns.read();
+                        let mut need: Vec<String> = Vec::new();
+                        for s in snap.sockets.iter().take(40) {
+                            if s.proto != "TCP" {
+                                continue;
+                            }
+                            if !cache.contains_key(&s.remote_ip) && need.len() < 8 {
+                                need.push(s.remote_ip.clone());
+                            }
                         }
-                        if !enricher.rdns_cache.contains_key(&s.remote_ip) && need.len() < 4 {
-                            need.push(s.remote_ip.clone());
+                        drop(cache);
+                        if !need.is_empty() {
+                            let _ = dns_tx.try_send(need);
                         }
                     }
-                    if !need.is_empty() {
-                        enricher.resolve_batch(&need, 4);
-                    }
-                    let geo: HashMap<String, String> = need
+                    let geo: HashMap<String, String> = snap
+                        .sockets
                         .iter()
-                        .map(|ip| (ip.clone(), enricher.country_for(ip)))
+                        .take(40)
+                        .filter(|s| s.proto == "TCP")
+                        .map(|s| s.remote_ip.clone())
+                        .collect::<std::collections::HashSet<_>>()
+                        .into_iter()
+                        .map(|ip| {
+                            let c = enricher.country_for(&ip);
+                            (ip, c)
+                        })
                         .collect();
 
                     let apps = monitor::build_app_stats(
@@ -742,7 +771,7 @@ fn spawn_monitor(app: AppHandle) {
                         dtx,
                         dt,
                         &flow,
-                        &enricher.rdns_cache,
+                        &rdns.read(),
                         &geo,
                     );
 
@@ -900,8 +929,10 @@ fn spawn_monitor(app: AppHandle) {
                         if tick_n % DB_WRITE_EVERY_TICKS == 0 {
                             let _ = s.insert_tick(&tick);
                         }
-                        let limit = state.quota_bytes_per_day.load(Ordering::Relaxed);
-                        if let Ok(today) = s.bytes_today(day_start_ts()) {
+                        // Quota accounting every 5 ticks — daily sums don't need 1Hz.
+                        if tick_n % 5 == 0 {
+                            let limit = state.quota_bytes_per_day.load(Ordering::Relaxed);
+                            if let Ok(today) = s.bytes_today(day_start_ts()) {
                             let day = now / 86400;
                             if today >= limit && quota_alerted_day != day {
                                 quota_alerted_day = day;
@@ -929,6 +960,7 @@ fn spawn_monitor(app: AppHandle) {
                                 let _ =
                                     app.emit("alert-raised", serde_json::json!({"kind":"quota"}));
                             }
+                        }
                         }
                         // Per-app quotas (every 10 ticks is plenty).
                         if tick_n % 10 == 0 {
@@ -984,7 +1016,8 @@ fn spawn_monitor(app: AppHandle) {
                     {
                         let state: tauri::State<'_, AppState> = app.state();
                         *state.last_tick.write() = Some(tick.clone());
-                        // Tray tooltip + sparkline (every 2s for the icon).
+                        // Tray tooltip (1Hz) + sparkline icon (0.33Hz — bitmap
+                        // upload each tick is pure overhead).
                         rate_history.push(tick.down_rate);
                         if rate_history.len() > 48 {
                             rate_history.remove(0);
@@ -995,7 +1028,7 @@ fn spawn_monitor(app: AppHandle) {
                                 human_rate(tick.down_rate),
                                 human_rate(tick.up_rate)
                             )));
-                            if tick_n % 2 == 0 {
+                            if tick_n % 3 == 0 {
                                 let _ =
                                     tray.set_icon(Some(tray_sparkline(&rate_history)));
                             }
@@ -1006,6 +1039,33 @@ fn spawn_monitor(app: AppHandle) {
                                 let _ = state.remote_tx.send(json);
                             }
                         }
+                    }
+                    // Tick budget: slowest snapshot→emit in each 60-tick window.
+                    // First 5 ticks are warmup (full process scan, EStats
+                    // enable-all, tray build) and don't count.
+                    let rest_ms = flow_t0.elapsed().as_millis().saturating_sub(flow_ms);
+                    if tick_n > 5 {
+                        slowest_ms = slowest_ms.max(loop_start.elapsed().as_millis());
+                        slowest_snap_ms = slowest_snap_ms.max(snap_ms);
+                        slowest_flow_ms = slowest_flow_ms.max(flow_ms);
+                        slowest_rest_ms = slowest_rest_ms.max(rest_ms);
+                    }
+                    if tick_n % 60 == 0 {
+                        if slowest_ms > 500 {
+                            eprintln!(
+                                "[netwire] tick budget: slowest {}ms in last 60s (snap {}ms / flow {}ms / rest {}ms) — over 500ms, pricier than the 1s slot allows",
+                                slowest_ms, slowest_snap_ms, slowest_flow_ms, slowest_rest_ms
+                            );
+                        } else {
+                            eprintln!(
+                                "[netwire] tick budget: slowest {}ms in last 60s (snap {}ms / flow {}ms / rest {}ms)",
+                                slowest_ms, slowest_snap_ms, slowest_flow_ms, slowest_rest_ms
+                            );
+                        }
+                        slowest_ms = 0;
+                        slowest_snap_ms = 0;
+                        slowest_flow_ms = 0;
+                        slowest_rest_ms = 0;
                     }
                     let _ = app.emit("traffic-tick", &tick);
                 }
@@ -1152,6 +1212,33 @@ pub fn run() {
             if let Err(e) = build_tray(app.handle()) {
                 eprintln!("[netwire] tray unavailable: {:#}", e);
             }
+            // First run after install: enable launch-at-startup by default.
+            // Release builds only — dev runs must not register themselves.
+            // One-shot via a persisted flag; the Settings toggle remains the
+            // source of truth afterwards (disabling there is never undone).
+            #[cfg(not(debug_assertions))]
+            {
+                let state = app.state::<AppState>();
+                let already = state
+                    .store
+                    .lock()
+                    .get_setting("autostart_default_applied")
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    == Some("1");
+                if !already {
+                    use tauri_plugin_autostart::ManagerExt;
+                    match app.handle().autolaunch().enable() {
+                        Ok(()) => eprintln!("[netwire] autostart enabled by default (first run)"),
+                        Err(e) => eprintln!("[netwire] autostart default failed: {}", e),
+                    }
+                    let _ = state
+                        .store
+                        .lock()
+                        .set_setting("autostart_default_applied", "1");
+                }
+            }
             // Resume remote server if it was left enabled.
             {
                 let state = app.state::<AppState>();
@@ -1163,7 +1250,11 @@ pub fn run() {
                 }
             }
             let handle = app.handle().clone();
-            spawn_monitor(handle);
+            // rDNS resolver thread (shared cache + bounded queue, see enrich.rs).
+            let rdns: enrich::RdnsCache = Default::default();
+            let (dns_tx, dns_rx) = std::sync::mpsc::sync_channel::<Vec<String>>(4);
+            enrich::spawn_resolver(dns_rx, rdns.clone());
+            spawn_monitor(handle, dns_tx, rdns);
             let h = app.handle().clone();
             std::thread::spawn(move || {
                 let _ = scan_lan(h);

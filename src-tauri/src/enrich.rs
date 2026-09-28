@@ -4,9 +4,47 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
+use std::sync::{mpsc::Receiver, Arc};
+
+/// Shared rDNS cache: written by the resolver thread, read by the monitor
+/// loop. Keeps blocking DNS (multi-second stalls on timeout) off the 1s tick.
+pub type RdnsCache = Arc<parking_lot::RwLock<HashMap<String, String>>>;
+
+/// Dedicated resolver thread: drains batches, resolves misses (with negative
+/// caching), never blocks the monitor loop. Drops batches when it falls
+/// behind — the next tick re-queues anything still unknown.
+pub fn spawn_resolver(rx: Receiver<Vec<String>>, cache: RdnsCache) {
+    std::thread::Builder::new()
+        .name("netwire-rdns".into())
+        .spawn(move || {
+            while let Ok(batch) = rx.recv() {
+                // Drain any backlog; only the freshest batch matters.
+                let mut latest = batch;
+                while let Ok(next) = rx.try_recv() {
+                    latest = next;
+                }
+                let mut done = 0;
+                for ip in latest {
+                    if done >= 8 {
+                        break;
+                    }
+                    if cache.read().contains_key(&ip) {
+                        continue;
+                    }
+                    let name = ip
+                        .parse::<IpAddr>()
+                        .ok()
+                        .and_then(|a| dns_lookup::lookup_addr(&a).ok())
+                        .unwrap_or_default();
+                    cache.write().insert(ip, name);
+                    done += 1;
+                }
+            }
+        })
+        .expect("rdns thread");
+}
 
 pub struct Enricher {
-    pub rdns_cache: HashMap<String, String>,
     geo_reader: Option<maxminddb::Reader<Vec<u8>>>,
 }
 
@@ -28,10 +66,7 @@ impl Enricher {
                 }
             }
         }
-        Self {
-            rdns_cache: HashMap::new(),
-            geo_reader,
-        }
+        Self { geo_reader }
     }
 
     pub fn geo_status(&self) -> &'static str {
@@ -39,29 +74,6 @@ impl Enricher {
             "ready"
         } else {
             "missing-mmdb"
-        }
-    }
-
-    /// Resolve up to `budget` unknown IPs synchronously (called off the hot path).
-    pub fn resolve_batch(&mut self, ips: &[String], budget: usize) {
-        let mut done = 0;
-        for ip in ips {
-            if done >= budget {
-                break;
-            }
-            if self.rdns_cache.contains_key(ip) {
-                continue;
-            }
-            if let Ok(addr) = ip.parse::<IpAddr>() {
-                if let Ok(name) = dns_lookup::lookup_addr(&addr) {
-                    self.rdns_cache.insert(ip.clone(), name);
-                    done += 1;
-                    continue;
-                }
-            }
-            // Negative cache to avoid hammering.
-            self.rdns_cache.insert(ip.clone(), String::new());
-            done += 1;
         }
     }
 
