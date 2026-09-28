@@ -31,13 +31,10 @@ pub async fn serve(
                 return;
             };
             let (mut w, mut r) = ws.split();
-            let authed =
-                match tokio::time::timeout(Duration::from_secs(10), r.next()).await {
-                    Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Text(t)))) => {
-                        t.trim() == token
-                    }
-                    _ => false,
-                };
+            let authed = match tokio::time::timeout(Duration::from_secs(10), r.next()).await {
+                Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Text(t)))) => t.trim() == token,
+                _ => false,
+            };
             if !authed {
                 let _ = w.close().await;
                 return;
@@ -51,10 +48,7 @@ pub async fn serve(
             loop {
                 match rx.recv().await {
                     Ok(m) => {
-                        if w
-                            .send(tokio_tungstenite::tungstenite::Message::Text(
-                                m.into(),
-                            ))
+                        if w.send(tokio_tungstenite::tungstenite::Message::Text(m.into()))
                             .await
                             .is_err()
                         {

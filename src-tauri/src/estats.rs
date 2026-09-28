@@ -34,8 +34,9 @@ mod imp {
     use std::net::Ipv4Addr;
     use windows::Win32::Foundation::BOOLEAN;
     use windows::Win32::NetworkManagement::IpHelper::{
-        GetPerTcpConnectionEStats, SetPerTcpConnectionEStats, MIB_TCPROW_LH, MIB_TCPROW_LH_0,
-        MIB_TCP_STATE_ESTAB, TCP_ESTATS_DATA_ROD_v0, TCP_ESTATS_DATA_RW_v0, TcpConnectionEstatsData,
+        GetPerTcpConnectionEStats, SetPerTcpConnectionEStats, TCP_ESTATS_DATA_ROD_v0,
+        TCP_ESTATS_DATA_RW_v0, TcpConnectionEstatsData, MIB_TCPROW_LH, MIB_TCPROW_LH_0,
+        MIB_TCP_STATE_ESTAB,
     };
 
     pub struct FlowTracker {
@@ -60,7 +61,9 @@ mod imp {
         fn make_row(s: &SocketEntry, lip: Ipv4Addr, rip: Ipv4Addr) -> MIB_TCPROW_LH {
             MIB_TCPROW_LH {
                 // Union literal construction happens inside the unsafe blocks below.
-                Anonymous: MIB_TCPROW_LH_0 { State: MIB_TCP_STATE_ESTAB },
+                Anonymous: MIB_TCPROW_LH_0 {
+                    State: MIB_TCP_STATE_ESTAB,
+                },
                 dwLocalAddr: u32::from_ne_bytes(lip.octets()),
                 // Ports in MIB_TCPROW are network-byte-order.
                 dwLocalPort: s.local_port.to_be() as u32,
@@ -100,13 +103,8 @@ mod imp {
                             &rw as *const _ as *const u8,
                             std::mem::size_of::<TCP_ESTATS_DATA_RW_v0>(),
                         );
-                        let rc = SetPerTcpConnectionEStats(
-                            &row,
-                            TcpConnectionEstatsData,
-                            bytes,
-                            0,
-                            0,
-                        );
+                        let rc =
+                            SetPerTcpConnectionEStats(&row, TcpConnectionEstatsData, bytes, 0, 0);
                         if rc == 0 {
                             self.enabled.insert(key);
                         } else {
@@ -117,7 +115,10 @@ mod imp {
                             }
                             if !self.logged_rc {
                                 self.logged_rc = true;
-                                eprintln!("[netwire] EStats enable failed, rc={} (need admin?)", rc);
+                                eprintln!(
+                                    "[netwire] EStats enable failed, rc={} (need admin?)",
+                                    rc
+                                );
                             }
                         }
                         continue; // counters start now; deltas next tick

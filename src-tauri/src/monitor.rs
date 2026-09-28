@@ -90,9 +90,8 @@ impl Poller {
                     ProtocolSocketInfo::Tcp(t) => {
                         // netstat2 0.11: remote_addr is IpAddr + remote_port separately.
                         let rip = t.remote_addr;
-                        let is_listener = t.remote_port == 0
-                            || rip.is_loopback()
-                            || rip.is_unspecified();
+                        let is_listener =
+                            t.remote_port == 0 || rip.is_loopback() || rip.is_unspecified();
                         if !is_listener {
                             sockets.push(SocketEntry {
                                 pid,
@@ -299,8 +298,7 @@ pub fn build_app_stats(
 
         // Distribute this app's UDP residual across its UDP-attributed hosts.
         if flow.active && udp_total > 0 && a.udp_sockets > 0 {
-            let app_res_down =
-                (res_rx as f64 * a.udp_sockets as f64 / udp_total as f64) as u64;
+            let app_res_down = (res_rx as f64 * a.udp_sockets as f64 / udp_total as f64) as u64;
             let app_res_up = (res_tx as f64 * a.udp_sockets as f64 / udp_total as f64) as u64;
             let udp_hosts: Vec<&mut HostStat> = hosts.iter_mut().collect();
             // Hosts that only have measured TCP keep it; UDP share goes to hosts
@@ -330,9 +328,7 @@ pub fn build_app_stats(
         });
     }
 
-    apps.sort_by(|a, b| {
-        (b.down_bytes + b.up_bytes).cmp(&(a.down_bytes + a.up_bytes))
-    });
+    apps.sort_by(|a, b| (b.down_bytes + b.up_bytes).cmp(&(a.down_bytes + a.up_bytes)));
     apps.truncate(60);
     apps
 }
@@ -356,18 +352,63 @@ mod tests {
             total_rx: 0,
             total_tx: 0,
             sockets: vec![
-                SocketEntry { pid: 1, proto: "TCP", local_ip: "10.0.0.2".into(), local_port: 5001, remote_ip: "1.1.1.1".into(), remote_port: 443 },
-                SocketEntry { pid: 1, proto: "TCP", local_ip: "10.0.0.2".into(), local_port: 5002, remote_ip: "1.1.1.1".into(), remote_port: 443 },
-                SocketEntry { pid: 2, proto: "TCP", local_ip: "10.0.0.2".into(), local_port: 5003, remote_ip: "2.2.2.2".into(), remote_port: 443 },
-                SocketEntry { pid: 2, proto: "TCP", local_ip: "10.0.0.2".into(), local_port: 5004, remote_ip: "2.2.2.2".into(), remote_port: 443 },
+                SocketEntry {
+                    pid: 1,
+                    proto: "TCP",
+                    local_ip: "10.0.0.2".into(),
+                    local_port: 5001,
+                    remote_ip: "1.1.1.1".into(),
+                    remote_port: 443,
+                },
+                SocketEntry {
+                    pid: 1,
+                    proto: "TCP",
+                    local_ip: "10.0.0.2".into(),
+                    local_port: 5002,
+                    remote_ip: "1.1.1.1".into(),
+                    remote_port: 443,
+                },
+                SocketEntry {
+                    pid: 2,
+                    proto: "TCP",
+                    local_ip: "10.0.0.2".into(),
+                    local_port: 5003,
+                    remote_ip: "2.2.2.2".into(),
+                    remote_port: 443,
+                },
+                SocketEntry {
+                    pid: 2,
+                    proto: "TCP",
+                    local_ip: "10.0.0.2".into(),
+                    local_port: 5004,
+                    remote_ip: "2.2.2.2".into(),
+                    remote_port: 443,
+                },
             ],
-            proc_names: [(1, ("a".into(), "a.exe".into())), (2, ("b".into(), "b.exe".into()))]
-                .into_iter()
-                .collect(),
+            proc_names: [
+                (1, ("a".into(), "a.exe".into())),
+                (2, ("b".into(), "b.exe".into())),
+            ]
+            .into_iter()
+            .collect(),
         };
         // Inactive flow → legacy proportional path.
-        let flow = FlowSample { active: false, needs_admin: false, deltas: HashMap::new(), tcp_rx: 0, tcp_tx: 0 };
-        let apps = build_app_stats(&snap, 300, 300, 1.0, &flow, &HashMap::new(), &HashMap::new());
+        let flow = FlowSample {
+            active: false,
+            needs_admin: false,
+            deltas: HashMap::new(),
+            tcp_rx: 0,
+            tcp_tx: 0,
+        };
+        let apps = build_app_stats(
+            &snap,
+            300,
+            300,
+            1.0,
+            &flow,
+            &HashMap::new(),
+            &HashMap::new(),
+        );
         assert_eq!(apps.len(), 2);
         let total: u64 = apps.iter().map(|a| a.down_bytes).sum();
         assert!(total <= 300 && total >= 298, "total={}", total);

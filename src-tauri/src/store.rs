@@ -104,7 +104,11 @@ impl Store {
             let mut st = tx.prepare(
                 "INSERT OR REPLACE INTO totals (ts, up_bytes, down_bytes) VALUES (?,?,?)",
             )?;
-            st.execute(params![tick.ts, tick.total_up as i64, tick.total_down as i64])?;
+            st.execute(params![
+                tick.ts,
+                tick.total_up as i64,
+                tick.total_down as i64
+            ])?;
         }
         {
             let mut st = tx.prepare(
@@ -241,7 +245,9 @@ impl Store {
     }
 
     pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
-        let mut st = self.conn.prepare("SELECT value FROM settings WHERE key = ?")?;
+        let mut st = self
+            .conn
+            .prepare("SELECT value FROM settings WHERE key = ?")?;
         let mut rows = st.query_map(params![key], |r| r.get::<_, String>(0))?;
         Ok(rows.next().and_then(|r| r.ok()))
     }
@@ -254,14 +260,11 @@ impl Store {
         )?;
         Ok(())
     }
-    pub fn prune(&self, keep_secs: i64, now: i64) -> Result<()> {        self.conn.execute(
-            "DELETE FROM samples WHERE ts < ?",
-            params![now - keep_secs],
-        )?;
-        self.conn.execute(
-            "DELETE FROM totals WHERE ts < ?",
-            params![now - keep_secs],
-        )?;
+    pub fn prune(&self, keep_secs: i64, now: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM samples WHERE ts < ?", params![now - keep_secs])?;
+        self.conn
+            .execute("DELETE FROM totals WHERE ts < ?", params![now - keep_secs])?;
         Ok(())
     }
 
@@ -369,7 +372,9 @@ mod tests {
             needs_admin: false,
         };
         s.insert_tick(&tick).unwrap();
-        let hist = s.history(1_700_000_000 - 60, 1_700_000_000 + 60, 5).unwrap();
+        let hist = s
+            .history(1_700_000_000 - 60, 1_700_000_000 + 60, 5)
+            .unwrap();
         assert_eq!(hist.len(), 1);
         assert_eq!(hist[0].app, "test.exe");
         assert_eq!(hist[0].down_bytes, 200);
@@ -379,15 +384,20 @@ mod tests {
     #[test]
     fn alerts_and_devices() {
         let s = mem_store();
-        s.push_alert(1, "new-app", "a.exe", "hello", "info").unwrap();
+        s.push_alert(1, "new-app", "a.exe", "hello", "info")
+            .unwrap();
         let alerts = s.recent_alerts(10).unwrap();
         assert_eq!(alerts.len(), 1);
         assert!(!alerts[0].read);
         s.mark_alerts_read().unwrap();
         assert!(s.recent_alerts(10).unwrap()[0].read);
 
-        assert!(s.upsert_device("aa:bb:cc:dd:ee:ff", "192.168.1.5", "Test", 1).unwrap());
-        assert!(!s.upsert_device("aa:bb:cc:dd:ee:ff", "192.168.1.5", "Test", 2).unwrap());
+        assert!(s
+            .upsert_device("aa:bb:cc:dd:ee:ff", "192.168.1.5", "Test", 1)
+            .unwrap());
+        assert!(!s
+            .upsert_device("aa:bb:cc:dd:ee:ff", "192.168.1.5", "Test", 2)
+            .unwrap());
         assert_eq!(s.devices(10).unwrap().len(), 1);
     }
 }

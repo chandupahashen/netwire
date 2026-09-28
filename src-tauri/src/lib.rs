@@ -70,9 +70,7 @@ fn default_token() -> String {
     let mut h = DefaultHasher::new();
     (
         std::process::id(),
-        chrono::Utc::now()
-            .timestamp_nanos_opt()
-            .unwrap_or_default(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default(),
     )
         .hash(&mut h);
     format!("{:016x}", h.finish())
@@ -187,7 +185,9 @@ fn resolve_host(ip: String) -> String {
 #[tauri::command]
 fn get_quota(state: tauri::State<'_, AppState>) -> Result<QuotaStatus, String> {
     let store = state.store.lock();
-    let today = store.bytes_today(day_start_ts()).map_err(|e| e.to_string())?;
+    let today = store
+        .bytes_today(day_start_ts())
+        .map_err(|e| e.to_string())?;
     let limit = state.quota_bytes_per_day.load(Ordering::Relaxed);
     Ok(QuotaStatus {
         bytes_today: today,
@@ -240,7 +240,10 @@ fn set_app_quota(
 }
 
 #[tauri::command]
-fn delete_app_quota(state: tauri::State<'_, AppState>, exe: String) -> Result<Vec<AppQuota>, String> {
+fn delete_app_quota(
+    state: tauri::State<'_, AppState>,
+    exe: String,
+) -> Result<Vec<AppQuota>, String> {
     {
         let store = state.store.lock();
         store.delete_app_quota(&exe).map_err(|e| e.to_string())?;
@@ -279,7 +282,11 @@ fn get_setting(state: tauri::State<'_, AppState>, key: String) -> Result<String,
 }
 
 #[tauri::command]
-fn set_setting(state: tauri::State<'_, AppState>, key: String, value: String) -> Result<(), String> {
+fn set_setting(
+    state: tauri::State<'_, AppState>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
     if !SETTING_KEYS.contains(&key.as_str()) {
         return Err("unknown setting".into());
     }
@@ -335,7 +342,11 @@ fn remote_cfg(state: &AppState) -> RemoteConfig {
         token = default_token();
         let _ = store.set_setting("remote_token", &token);
     }
-    RemoteConfig { enabled, port, token }
+    RemoteConfig {
+        enabled,
+        port,
+        token,
+    }
 }
 
 fn remote_status_of(state: &AppState) -> RemoteStatus {
@@ -438,16 +449,14 @@ fn remote_status(state: tauri::State<'_, AppState>) -> RemoteStatus {
 // ---------- Export (Rust-side save dialog: no JS capability needed) ----------
 
 #[tauri::command]
-fn export_history_csv(
-    app: AppHandle,
-    from_ts: i64,
-    to_ts: i64,
-) -> Result<String, String> {
+fn export_history_csv(app: AppHandle, from_ts: i64, to_ts: i64) -> Result<String, String> {
     use tauri_plugin_dialog::{DialogExt, FilePath};
     let state: tauri::State<'_, AppState> = app.state();
     let rows = {
         let store = state.store.lock();
-        store.export_rows(from_ts, to_ts).map_err(|e| e.to_string())?
+        store
+            .export_rows(from_ts, to_ts)
+            .map_err(|e| e.to_string())?
     };
     let Some(path) = app
         .dialog()
@@ -765,15 +774,8 @@ fn spawn_monitor(
                         })
                         .collect();
 
-                    let apps = monitor::build_app_stats(
-                        &snap,
-                        drx,
-                        dtx,
-                        dt,
-                        &flow,
-                        &rdns.read(),
-                        &geo,
-                    );
+                    let apps =
+                        monitor::build_app_stats(&snap, drx, dtx, dt, &flow, &rdns.read(), &geo);
 
                     let tick = TrafficTick {
                         ts: now,
@@ -795,10 +797,8 @@ fn spawn_monitor(
                             .filter(|s| !(flow.active && s.proto == "TCP"))
                             .count()
                             .max(1) as f64;
-                        let res_rx =
-                            drx.saturating_sub(flow.tcp_rx.min(drx)) as f64 / udp_count;
-                        let res_tx =
-                            dtx.saturating_sub(flow.tcp_tx.min(dtx)) as f64 / udp_count;
+                        let res_rx = drx.saturating_sub(flow.tcp_rx.min(drx)) as f64 / udp_count;
+                        let res_tx = dtx.saturating_sub(flow.tcp_tx.min(dtx)) as f64 / udp_count;
                         let mut conns: Vec<ConnectionStat> = snap
                             .sockets
                             .iter()
@@ -808,15 +808,14 @@ fn spawn_monitor(
                                     .get(&s.pid)
                                     .cloned()
                                     .unwrap_or_else(|| ("unknown".into(), String::new()));
-                                let (down, up, measured) =
-                                    if flow.active && s.proto == "TCP" {
-                                        match flow.deltas.get(&flow_key(s)) {
-                                            Some(&(di, do_)) => (di, do_, true),
-                                            None => (0, 0, true),
-                                        }
-                                    } else {
-                                        (res_rx as u64, res_tx as u64, false)
-                                    };
+                                let (down, up, measured) = if flow.active && s.proto == "TCP" {
+                                    match flow.deltas.get(&flow_key(s)) {
+                                        Some(&(di, do_)) => (di, do_, true),
+                                        None => (0, 0, true),
+                                    }
+                                } else {
+                                    (res_rx as u64, res_tx as u64, false)
+                                };
                                 ConnectionStat {
                                     proto: s.proto.to_string(),
                                     local: format!("{}:{}", s.local_ip, s.local_port),
@@ -864,10 +863,7 @@ fn spawn_monitor(
                                     now,
                                     "new-app",
                                     &a.name,
-                                    &format!(
-                                        "{} accessed the network for the first time",
-                                        a.name
-                                    ),
+                                    &format!("{} accessed the network for the first time", a.name),
                                     "info",
                                 );
                                 let _ = app.emit(
@@ -879,27 +875,20 @@ fn spawn_monitor(
                                     "new-app",
                                     &a.name,
                                     &a.exe,
-                                    format!(
-                                        "{} accessed the network for the first time",
-                                        a.name
-                                    ),
+                                    format!("{} accessed the network for the first time", a.name),
                                     "info",
                                 );
                             }
                             for h in &a.hosts {
                                 if let Ok(true) = s.is_threat(&h.ip) {
-                                    let seen =
-                                        state.known_threat_hits.read().contains(&h.ip);
+                                    let seen = state.known_threat_hits.read().contains(&h.ip);
                                     if !seen {
                                         state.known_threat_hits.write().insert(h.ip.clone());
                                         let _ = s.push_alert(
                                             now,
                                             "threat-ip",
                                             &a.name,
-                                            &format!(
-                                                "{} talked to flagged IP {}",
-                                                a.name, h.ip
-                                            ),
+                                            &format!("{} talked to flagged IP {}", a.name, h.ip),
                                             "high",
                                         );
                                         dispatch_popup(
@@ -907,10 +896,7 @@ fn spawn_monitor(
                                             "threat-ip",
                                             &a.name,
                                             "",
-                                            format!(
-                                                "{} talked to flagged IP {}",
-                                                a.name, h.ip
-                                            ),
+                                            format!("{} talked to flagged IP {}", a.name, h.ip),
                                             "high",
                                         );
                                         let _ = app.emit(
@@ -933,34 +919,34 @@ fn spawn_monitor(
                         if tick_n % 5 == 0 {
                             let limit = state.quota_bytes_per_day.load(Ordering::Relaxed);
                             if let Ok(today) = s.bytes_today(day_start_ts()) {
-                            let day = now / 86400;
-                            if today >= limit && quota_alerted_day != day {
-                                quota_alerted_day = day;
-                                let _ = s.push_alert(
-                                    now,
-                                    "quota",
-                                    "",
-                                    &format!(
-                                        "Daily data quota exceeded ({:.2} GiB)",
-                                        today as f64 / 1073741824.0
-                                    ),
-                                    "warn",
-                                );
-                                dispatch_popup(
-                                    &app,
-                                    "quota",
-                                    "",
-                                    "",
-                                    format!(
-                                        "Daily data quota exceeded ({:.2} GiB)",
-                                        today as f64 / 1073741824.0
-                                    ),
-                                    "warn",
-                                );
-                                let _ =
-                                    app.emit("alert-raised", serde_json::json!({"kind":"quota"}));
+                                let day = now / 86400;
+                                if today >= limit && quota_alerted_day != day {
+                                    quota_alerted_day = day;
+                                    let _ = s.push_alert(
+                                        now,
+                                        "quota",
+                                        "",
+                                        &format!(
+                                            "Daily data quota exceeded ({:.2} GiB)",
+                                            today as f64 / 1073741824.0
+                                        ),
+                                        "warn",
+                                    );
+                                    dispatch_popup(
+                                        &app,
+                                        "quota",
+                                        "",
+                                        "",
+                                        format!(
+                                            "Daily data quota exceeded ({:.2} GiB)",
+                                            today as f64 / 1073741824.0
+                                        ),
+                                        "warn",
+                                    );
+                                    let _ = app
+                                        .emit("alert-raised", serde_json::json!({"kind":"quota"}));
+                                }
                             }
-                        }
                         }
                         // Per-app quotas (every 10 ticks is plenty).
                         if tick_n % 10 == 0 {
@@ -968,15 +954,9 @@ fn spawn_monitor(
                                 let day = now / 86400;
                                 for q in quotas {
                                     if q.bytes_today >= q.bytes_per_day
-                                        && !state
-                                            .quota_hits
-                                            .read()
-                                            .contains(&(q.exe.clone(), day))
+                                        && !state.quota_hits.read().contains(&(q.exe.clone(), day))
                                     {
-                                        state
-                                            .quota_hits
-                                            .write()
-                                            .insert((q.exe.clone(), day));
+                                        state.quota_hits.write().insert((q.exe.clone(), day));
                                         let _ = s.push_alert(
                                             now,
                                             "app-quota",
@@ -1029,8 +1009,7 @@ fn spawn_monitor(
                                 human_rate(tick.up_rate)
                             )));
                             if tick_n % 3 == 0 {
-                                let _ =
-                                    tray.set_icon(Some(tray_sparkline(&rate_history)));
+                                let _ = tray.set_icon(Some(tray_sparkline(&rate_history)));
                             }
                         }
                         // Remote subscribers.

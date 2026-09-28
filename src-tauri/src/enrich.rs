@@ -128,7 +128,11 @@ fn extract_ip(s: &str) -> Option<String> {
             current.push(ch);
             dots += 1;
         } else {
-            if dots == 3 && current.split('.').all(|p| p.parse::<u8>().is_ok() || p.len() <= 3) {
+            if dots == 3
+                && current
+                    .split('.')
+                    .all(|p| p.parse::<u8>().is_ok() || p.len() <= 3)
+            {
                 // validate quickly
                 let parts: Vec<&str> = current.split('.').collect();
                 if parts.len() == 4 && parts.iter().all(|p| p.parse::<u8>().is_ok()) {
@@ -147,7 +151,13 @@ fn extract_mac(s: &str) -> Option<String> {
     // accept aa:bb:cc:dd:ee:ff or aa-bb-cc-dd-ee-ff
     for token in s.split_whitespace() {
         let t = token.trim_matches(|c| c == '(' || c == ')' || c == ',');
-        let sep = if t.contains(':') { ':' } else if t.contains('-') { '-' } else { continue };
+        let sep = if t.contains(':') {
+            ':'
+        } else if t.contains('-') {
+            '-'
+        } else {
+            continue;
+        };
         let parts: Vec<&str> = t.split(sep).collect();
         if parts.len() == 6
             && parts
@@ -162,7 +172,12 @@ fn extract_mac(s: &str) -> Option<String> {
 
 /// Tiny built-in OUI map for common vendors (full IEEE list is 30k+ rows — ship as data file later).
 pub fn vendor_guess(mac: &str) -> String {
-    let prefix = mac.replace(':', "").to_uppercase().chars().take(6).collect::<String>();
+    let prefix = mac
+        .replace(':', "")
+        .to_uppercase()
+        .chars()
+        .take(6)
+        .collect::<String>();
     match prefix.as_str() {
         "3C7C3F" | "F4D108" | "B0B98A" => "TP-Link",
         "D850E6" | "14CC20" => "ASUSTek",

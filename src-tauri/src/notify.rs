@@ -105,7 +105,9 @@ impl ToastCenter {
     }
 
     pub fn height(&self) -> u32 {
-        self.height.load(Ordering::SeqCst).clamp(80, TOAST_MAX_HEIGHT as u32)
+        self.height
+            .load(Ordering::SeqCst)
+            .clamp(80, TOAST_MAX_HEIGHT as u32)
     }
 }
 
@@ -193,32 +195,26 @@ pub fn show_toasts(app: &tauri::AppHandle, height: u32) -> anyhow::Result<()> {
     use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
     let win = match app.get_webview_window("toast") {
         Some(w) => w,
-        None => WebviewWindowBuilder::new(
-            app,
-            "toast",
-            WebviewUrl::App("index.html?toast=1".into()),
-        )
-        .title("NetWire")
-        .inner_size(TOAST_WIDTH, height.max(80) as f64)
-        .decorations(false)
-        .transparent(true)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .resizable(false)
-        .focused(false)
-        .visible(false)
-        .build()?,
+        None => {
+            WebviewWindowBuilder::new(app, "toast", WebviewUrl::App("index.html?toast=1".into()))
+                .title("NetWire")
+                .inner_size(TOAST_WIDTH, height.max(80) as f64)
+                .decorations(false)
+                .transparent(true)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .resizable(false)
+                .focused(false)
+                .visible(false)
+                .build()?
+        }
     };
     place(&win, app, height)?;
     win.show()?;
     Ok(())
 }
 
-fn place(
-    win: &tauri::WebviewWindow,
-    app: &tauri::AppHandle,
-    height: u32,
-) -> anyhow::Result<()> {
+fn place(win: &tauri::WebviewWindow, app: &tauri::AppHandle, height: u32) -> anyhow::Result<()> {
     use tauri::Manager;
     if let Ok(Some(mon)) = app.primary_monitor() {
         let scale = mon.scale_factor();
@@ -296,7 +292,11 @@ mod tests {
         assert!(c.push(mk("b"), 101).is_some());
         let third = c.push(mk("c"), 102).unwrap();
         assert_eq!(c.list().len(), 1, "burst should collapse to summary");
-        assert!(third.message.contains("3 new apps"), "got: {}", third.message);
+        assert!(
+            third.message.contains("3 new apps"),
+            "got: {}",
+            third.message
+        );
     }
 
     #[test]
@@ -320,6 +320,9 @@ mod tests {
         }
         let list = c.list();
         assert_eq!(list.len(), MAX_VISIBLE);
-        assert!(list.iter().any(|t| t.severity == "high"), "high must survive");
+        assert!(
+            list.iter().any(|t| t.severity == "high"),
+            "high must survive"
+        );
     }
 }
