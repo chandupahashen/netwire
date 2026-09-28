@@ -215,7 +215,6 @@ pub fn show_toasts(app: &tauri::AppHandle, height: u32) -> anyhow::Result<()> {
 }
 
 fn place(win: &tauri::WebviewWindow, app: &tauri::AppHandle, height: u32) -> anyhow::Result<()> {
-    use tauri::Manager;
     if let Ok(Some(mon)) = app.primary_monitor() {
         let scale = mon.scale_factor();
         let sz = mon.size();

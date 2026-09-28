@@ -69,14 +69,6 @@ impl Enricher {
         Self { geo_reader }
     }
 
-    pub fn geo_status(&self) -> &'static str {
-        if self.geo_reader.is_some() {
-            "ready"
-        } else {
-            "missing-mmdb"
-        }
-    }
-
     pub fn country_for(&self, ip: &str) -> String {
         if let Some(r) = &self.geo_reader {
             if let Ok(addr) = ip.parse::<IpAddr>() {
