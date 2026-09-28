@@ -25,8 +25,30 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Check formatting and backend
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo check --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Check tag matches package version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart("v")
+          $pkg = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $conf = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargo = Select-String -Path src-tauri/Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1 | ForEach-Object { $_.Matches.Groups[1].Value }
+          if ($tag -ne $pkg -or $tag -ne $conf -or $tag -ne $cargo) {
+            Write-Error "Tag v$tag does not match package versions (package.json=$pkg, tauri.conf.json=$conf, Cargo.toml=$cargo). Bump all three first."
+            exit 1
+          }
 
       - name: Configure GitHub Releases updater endpoint
         shell: pwsh

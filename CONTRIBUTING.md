@@ -68,6 +68,33 @@ Open an issue with: NetWire version, OS + version, whether running elevated,
 steps to reproduce, and relevant log lines (dev mode prints `[netwire] ...`
 messages to the terminal). Screenshots of the affected tab help.
 
+## Releasing (maintainers)
+
+Releases are fully automatic: pushing a version tag builds the installers
+and publishes a GitHub Release with updater metadata.
+
+1. **Sync the version** in all three places: `package.json`,
+   `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`. Move the
+   `CHANGELOG.md` `[Unreleased]` entries into a versioned section.
+2. **One-time setup — signing secret.** The release signs updater artifacts
+   with the repo's minisign keypair (public key lives in
+   `tauri.conf.json` → `plugins.updater.pubkey`). Add the **private key
+   content** as a repository secret named `TAURI_SIGNING_PRIVATE_KEY`
+   (Settings → Secrets and variables → Actions → New repository secret).
+   Never commit the private key. Without this secret the release job fails
+   at the signing step — exactly like a local `tauri build` without the
+   env var does.
+3. **Tag and push:** `git tag v0.1.0; git push origin v0.1.0`. The tag must
+   match the three package versions or the workflow fails fast with a
+   clear error.
+4. The `Release` workflow then: installs deps → checks formatting/backend →
+   builds NSIS + MSI installers → signs them → publishes the GitHub Release
+   with `latest.json` for the in-app updater (NSIS preferred).
+
+To test the pipeline without shipping: push to a branch and open a PR —
+the `CI` workflow runs the same frontend build, `cargo fmt --check`, and
+`cargo check --locked` steps.
+
 ## Code of Conduct
 
 By participating you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md).
