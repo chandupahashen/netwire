@@ -1,6 +1,6 @@
 [package]
 name = "netwire"
-version = "0.1.0"
+version = "0.2.0"
 description = "NetWire - GlassWire-like advanced network monitor (Tauri v2)"
 authors = ["NetWire"]
 license = "MIT"
