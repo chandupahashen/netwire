@@ -32,7 +32,6 @@ pub fn flow_key(s: &SocketEntry) -> String {
 mod imp {
     use super::*;
     use std::net::Ipv4Addr;
-    use windows::Win32::Foundation::BOOLEAN;
     use windows::Win32::NetworkManagement::IpHelper::{
         GetPerTcpConnectionEStats, SetPerTcpConnectionEStats, TCP_ESTATS_DATA_ROD_v0,
         TCP_ESTATS_DATA_RW_v0, TcpConnectionEstatsData, MIB_TCPROW_LH, MIB_TCPROW_LH_0,
@@ -97,7 +96,7 @@ mod imp {
                 unsafe {
                     if !self.enabled.contains(&key) {
                         let rw = TCP_ESTATS_DATA_RW_v0 {
-                            EnableCollection: BOOLEAN(1),
+                            EnableCollection: true,
                         };
                         let bytes = std::slice::from_raw_parts(
                             &rw as *const _ as *const u8,

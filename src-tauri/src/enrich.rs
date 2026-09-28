@@ -80,10 +80,9 @@ impl Enricher {
     pub fn country_for(&self, ip: &str) -> String {
         if let Some(r) = &self.geo_reader {
             if let Ok(addr) = ip.parse::<IpAddr>() {
-                let res: Result<maxminddb::geoip2::Country, _> = r.lookup(addr);
-                if let Ok(country) = res {
-                    if let Some(inner) = country.country {
-                        if let Some(iso) = inner.iso_code {
+                if let Ok(res) = r.lookup(addr) {
+                    if let Ok(Some(country)) = res.decode::<maxminddb::geoip2::Country>() {
+                        if let Some(iso) = country.country.iso_code {
                             return iso.to_string();
                         }
                     }
