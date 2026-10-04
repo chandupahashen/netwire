@@ -17,7 +17,7 @@
     "@tauri-apps/plugin-process": "^2.4.0",
     "@tauri-apps/plugin-notification": "^2.5.0",
     "@tauri-apps/plugin-opener": "^2.6.0",
-    "@tauri-apps/plugin-updater": "^2.13.0",
+    "@tauri-apps/plugin-updater": "^2.13.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "uplot": "^1.6.32"
